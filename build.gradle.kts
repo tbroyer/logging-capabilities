@@ -15,11 +15,11 @@
  */
 
 plugins {
-    `java-gradle-plugin`
     groovy
-    id("com.gradle.plugin-publish") version "0.18.0"
+    id("com.gradle.plugin-publish") version "1.0.0-local1"
     dev.jacomet.build.functional
     id("com.github.hierynomus.license") version "0.15.0"
+    signing
 }
 
 repositories {
@@ -28,7 +28,7 @@ repositories {
 }
 
 group = "dev.jacomet.gradle.plugins"
-version = "0.10.0"
+version = "0.11.0-dev"
 
 java {
     targetCompatibility = JavaVersion.VERSION_1_8
@@ -62,12 +62,19 @@ pluginBundle {
     website = "https://github.com/ljacomet/logging-capabilities"
     vcsUrl = "https://github.com/ljacomet/logging-capabilities.git"
     tags = listOf("dependency", "dependencies", "dependency-management", "logging", "slf4j", "log4j2")
+}
 
-    mavenCoordinates {
-        groupId = project.group.toString()
-        artifactId = project.name
-        version = project.version.toString()
+publishing {
+    repositories {
+        maven {
+            name = "local"
+            url = uri(layout.buildDirectory.dir("repo"))
+        }
     }
+}
+
+signing {
+    useGpgCmd()
 }
 
 license {
@@ -85,6 +92,6 @@ license {
     exclude("**/.gradle/*")
 }
 
-tasks.withType<Test> {
+tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
