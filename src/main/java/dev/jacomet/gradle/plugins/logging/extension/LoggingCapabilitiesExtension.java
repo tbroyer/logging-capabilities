@@ -430,6 +430,7 @@ public class LoggingCapabilitiesExtension {
         configurations.matching(conf -> conf.getName().equals(configurationName)).all(getSlf4JEnforcementSubstitutions());
     }
 
+    @SuppressWarnings("deprecation") // keep using .with() for compatibility with Gradle < 6.6
     private Action<Configuration> getSlf4JEnforcementSubstitutions() {
         return conf -> conf.getResolutionStrategy().dependencySubstitution(substitution -> {
             ComponentSelector log4JOverSlf4J = substitution.module(LoggingModuleIdentifiers.LOG4J_OVER_SLF4J.asFirstVersion());

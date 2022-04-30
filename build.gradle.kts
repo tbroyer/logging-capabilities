@@ -19,9 +19,8 @@ import org.gradle.util.GradleVersion
 plugins {
     `java-gradle-plugin`
     groovy
-    id("com.gradle.plugin-publish") version "0.18.0"
-    dev.jacomet.build.functional
-    id("com.github.hierynomus.license") version "0.15.0"
+    id("com.gradle.plugin-publish") version "0.21.0"
+    id("com.github.hierynomus.license") version "0.16.1"
 }
 
 repositories {
@@ -41,7 +40,7 @@ java {
 dependencies {
     implementation(gradleApi())
 
-    testImplementation("org.spockframework:spock-core:2.0-groovy-2.5")
+    testImplementation("org.spockframework:spock-core:2.0-groovy-3.0")
     testImplementation("org.junit.jupiter:junit-jupiter:5.8.1")
 }
 
@@ -86,11 +85,37 @@ license {
     exclude("**/.gradle/*")
 }
 
+testing {
+    suites {
+        val test by getting(JvmTestSuite::class) {
+            dependencies {
+                implementation("org.spockframework:spock-core:2.0-groovy-3.0")
+            }
+        }
+
+        create<JvmTestSuite>("functionalTest") {
+            dependencies {
+                implementation("org.spockframework:spock-core:2.0-groovy-3.0")
+            }
+            targets {
+                all {
+                    testTask.configure {
+                        shouldRunAfter(test)
+                        systemProperty("test.gradle-version", project.findProperty("test.gradle-version") ?: GradleVersion.current().version)
+                    }
+                }
+            }
+        }
+    }
+}
+
+gradlePlugin.testSourceSets(sourceSets["functionalTest"])
+
 tasks {
     withType<Test> {
         useJUnitPlatform()
     }
-    functionalTest {
-        systemProperty("test.gradle-version", project.findProperty("test.gradle-version") ?: GradleVersion.current().version)
+    check {
+        dependsOn(testing.suites.named("functionalTest"))
     }
 }
