@@ -295,4 +295,32 @@ ${additional.collect { "                runtimeOnly(\"$it\")" }.join("\n")}
         then:
         outcomeOf(result, ':doIt') == SUCCESS
     }
+
+    @Requires({ instance.testGradleVersion >= GradleVersion.version("6.8") })
+    def "can be applied in settings script"() {
+        given:
+        // TODO: test that rules are applied on project if any rule is added there
+        withSettingsScript("""
+plugins {
+    id("dev.jacomet.logging-capabilities")
+}
+dependencyResolutionManagement {
+    rulesMode.set(RulesMode.FAIL_ON_PROJECT_RULES)
+}
+""")
+        withBuildScriptWithDependencies("org.apache.logging.log4j:log4j-core:2.17.0", "org.apache.logging.log4j:log4j-to-slf4j:2.17.0")
+        withBuildScript("""
+loggingCapabilities {
+    enforceLog4J2()
+}
+""")
+
+        when:
+        def result = build(['doIt'])
+
+        then:
+        outcomeOf(result, ':doIt') == SUCCESS
+        !result.output.contains("log4j-to-slf4j-2.17.0.jar")
+        result.output.contains("log4j-core-2.17.0.jar")
+    }
 }

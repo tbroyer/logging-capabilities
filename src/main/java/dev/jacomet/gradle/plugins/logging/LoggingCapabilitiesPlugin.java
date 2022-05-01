@@ -28,49 +28,96 @@ import dev.jacomet.gradle.plugins.logging.rules.Slf4JvsJUL;
 import dev.jacomet.gradle.plugins.logging.rules.Slf4JvsLog4J;
 import dev.jacomet.gradle.plugins.logging.rules.Slf4JvsLog4J2ForJUL;
 import dev.jacomet.gradle.plugins.logging.rules.Slf4JvsLog4J2ForLog4J;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Consumer;
+import org.gradle.api.Action;
+import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.dsl.ComponentMetadataHandler;
 import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.initialization.Settings;
+import org.gradle.api.initialization.resolve.RulesMode;
+import org.gradle.api.internal.artifacts.dsl.ComponentMetadataHandlerInternal;
+import org.gradle.api.invocation.Gradle;
+import org.gradle.api.provider.Provider;
+import org.gradle.api.services.BuildServiceRegistration;
 import org.gradle.util.GradleVersion;
 
-public class LoggingCapabilitiesPlugin implements Plugin<Project> {
+public class LoggingCapabilitiesPlugin implements Plugin<Object> {
 
+    private static final GradleVersion GRADLE_6_8 = GradleVersion.version("6.8");
     private static final GradleVersion GRADLE_6_2 = GradleVersion.version("6.2");
     private static final GradleVersion GRADLE_6 = GradleVersion.version("6.0");
     private static final GradleVersion GRADLE_5_2 = GradleVersion.version("5.2");
+    public static final String SERVICE_NAME = "dev.ljacomet.logging-capabilities";
 
     @Override
-    public void apply(Project project) {
-        DependencyHandler dependencies = project.getDependencies();
+    public void apply(Object target) {
         GradleVersion gradleVersion = GradleVersion.current();
-        if (gradleVersion.compareTo(GRADLE_6) >= 0) {
-            // Only add the extension for Gradle 6 and above
-            project.getExtensions().create("loggingCapabilities", LoggingCapabilitiesExtension.class, project.getConfigurations(), dependencies, getAlignmentActivation(dependencies, gradleVersion));
+
+        final Consumer<Action<? super ComponentMetadataHandler>> components;
+        if (target instanceof Settings) {
+            Settings settings = (Settings) target;
+            settings.getGradle().getSharedServices().registerIfAbsent(SERVICE_NAME, LoggingCapabilitiesService.class, LoggingCapabilitiesService.Params.forSettings(settings));
+            components = settings.getDependencyResolutionManagement()::components;
+        } else if (target instanceof Project) {
+            Project project = (Project) target;
+            DependencyHandler dependencies = project.getDependencies();
+
+            if (gradleVersion.compareTo(GRADLE_6) >= 0) {
+                // Only add the extension for Gradle 6 and above
+                project.getExtensions().create("loggingCapabilities", LoggingCapabilitiesExtension.class, project.getConfigurations(), dependencies, getAlignmentActivation(dependencies, gradleVersion));
+            }
+
+            if (gradleVersion.compareTo(GRADLE_6_8) >= 0) {
+                // only configure component metadata rules if not already configured at Settings level
+                // if using RulesMode.PREFER_PROJECT, accumulate rules and only actually "play" them if any rule is configured in project
+                LoggingCapabilitiesService service = project.getGradle().getSharedServices().registerIfAbsent(SERVICE_NAME, LoggingCapabilitiesService.class, LoggingCapabilitiesService.Params::none).get();
+		if (service.getRulesMode() == null) {
+                    components = project.getDependencies()::components;
+		} else if (service.getRulesMode() == RulesMode.PREFER_PROJECT) {
+                    List<Action<? super ComponentMetadataHandler>> actions = new ArrayList<>();
+                    components = actions::add;
+                    ((ComponentMetadataHandlerInternal) project.getDependencies().getComponents()).onAddRule(ignored -> {
+                        project.getLogger().lifecycle("I've been called! {}", ignored.getDisplayName());
+                        actions.forEach(project.getDependencies()::components);
+                    });
+                } else {
+                    components = action -> {};
+                }
+            } else {
+                components = project.getDependencies()::components;
+            }
+        } else {
+            throw new GradleException("The Gradle Enterprise plugin must be applied to the settings (was applied to " + (target instanceof Gradle ? "init script" : target.getClass().getName()) + ")");
         }
-        configureCommonsLogging(dependencies);
-        configureJavaUtilLogging(dependencies);
-        configureLog4J(dependencies);
-        configureSlf4J(dependencies);
-        configureLog4J2(dependencies);
-        configureLog4J2Implementation(dependencies);
+
+        configureCommonsLogging(components);
+        configureJavaUtilLogging(components);
+        configureLog4J(components);
+        configureSlf4J(components);
+        configureLog4J2(components);
+        configureLog4J2Implementation(components);
 
         // ljacomet/logging-capabilities#4
         if (gradleVersion.compareTo(GRADLE_5_2) < 0 || gradleVersion.compareTo(GRADLE_6_2) >= 0) {
-            configureAlignment(dependencies);
+            configureAlignment(components);
         }
     }
 
     private Runnable getAlignmentActivation(DependencyHandler dependencies, GradleVersion gradleVersion) {
         if (gradleVersion.compareTo(GRADLE_6_2) < 0) {
             return () -> {
-                configureAlignment(dependencies);
+                configureAlignment(dependencies::components);
             };
         }
         return () -> {};
     }
 
-    private void configureAlignment(DependencyHandler dependencies) {
-        dependencies.components(handler -> {
+    private void configureAlignment(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept(handler -> {
             handler.all(Slf4JAlignment.class);
             handler.all(Log4J2Alignment.class);
         });
@@ -83,8 +130,8 @@ public class LoggingCapabilitiesPlugin implements Plugin<Project> {
      * Given the above:
      * * `log4j-slf4j-impl` and `log4j-to-slf4j` are exclusive
      */
-    private void configureLog4J2(DependencyHandler dependencies) {
-        dependencies.components(handler -> {
+    private void configureLog4J2(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept(handler -> {
             handler.withModule(LoggingModuleIdentifiers.LOG4J_SLF4J_IMPL.moduleId, Log4J2vsSlf4J.class);
             handler.withModule(LoggingModuleIdentifiers.LOG4J_TO_SLF4J.moduleId, Log4J2vsSlf4J.class);
         });
@@ -97,8 +144,8 @@ public class LoggingCapabilitiesPlugin implements Plugin<Project> {
      * Given the above:
      * * `log4j-core` and `log4j-to-slf4j` are exclusive
      */
-    private void configureLog4J2Implementation(DependencyHandler dependencies) {
-        dependencies.components(handler -> {
+    private void configureLog4J2Implementation(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept(handler -> {
             handler.withModule(LoggingModuleIdentifiers.LOG4J_TO_SLF4J.moduleId, Log4J2Implementation.class);
             handler.withModule(LoggingModuleIdentifiers.LOG4J_CORE.moduleId, Log4J2Implementation.class);
         });
@@ -114,8 +161,8 @@ public class LoggingCapabilitiesPlugin implements Plugin<Project> {
      * * `slf4j-jdk14` to use Java Util Logging
      * * `log4j-slf4j-impl` to use Log4J2
      */
-    private void configureSlf4J(DependencyHandler dependencies) {
-        dependencies.components(handler -> {
+    private void configureSlf4J(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept(handler -> {
             handler.withModule(LoggingModuleIdentifiers.SLF4J_SIMPLE.moduleId, Slf4JImplementation.class);
             handler.withModule(LoggingModuleIdentifiers.LOGBACK_CLASSIC.moduleId, Slf4JImplementation.class);
             handler.withModule(LoggingModuleIdentifiers.SLF4J_LOG4J12.moduleId, Slf4JImplementation.class);
@@ -138,8 +185,8 @@ public class LoggingCapabilitiesPlugin implements Plugin<Project> {
      * * `log4j-over-slf4j` and `slf4j-log4j12` are exclusive
      * * `log4j-over-slf4j` and `log4j-1.2-api` and `log4j` are exclusive
      */
-    private void configureLog4J(DependencyHandler dependencies) {
-        dependencies.components(handler -> {
+    private void configureLog4J(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept(handler -> {
             handler.withModule(LoggingModuleIdentifiers.LOG4J_OVER_SLF4J.moduleId, Slf4JvsLog4J.class);
             handler.withModule(LoggingModuleIdentifiers.SLF4J_LOG4J12.moduleId, Slf4JvsLog4J.class);
 
@@ -162,8 +209,8 @@ public class LoggingCapabilitiesPlugin implements Plugin<Project> {
      * * `jul-to-slf4j` and `slf4j-jdk14` are exclusive
      * * `jul-to-slf4j` and `log4j-jul` are exclusive
      */
-    private void configureJavaUtilLogging(DependencyHandler dependencies) {
-        dependencies.components( handler -> {
+    private void configureJavaUtilLogging(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept( handler -> {
             handler.withModule(LoggingModuleIdentifiers.JUL_TO_SLF4J.moduleId, Slf4JvsJUL.class);
             handler.withModule(LoggingModuleIdentifiers.SLF4J_JDK14.moduleId, Slf4JvsJUL.class);
 
@@ -186,8 +233,8 @@ public class LoggingCapabilitiesPlugin implements Plugin<Project> {
      * * `commons-logging` and `jcl-over-slf4j` are exclusive
      * * `jcl-over-slf4j` and `log4j-jcl` are exclusive
      */
-    private void configureCommonsLogging(DependencyHandler dependencies) {
-        dependencies.components( handler -> {
+    private void configureCommonsLogging(Consumer<Action<? super ComponentMetadataHandler>> components) {
+        components.accept( handler -> {
             handler.withModule(LoggingModuleIdentifiers.COMMONS_LOGGING.moduleId, CommonsLoggingImplementationRule.class);
             handler.withModule(LoggingModuleIdentifiers.JCL_OVER_SLF4J.moduleId, CommonsLoggingImplementationRule.class);
 

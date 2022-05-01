@@ -16,10 +16,11 @@ abstract class AbstractLoggingCapabilitiesPluginFunctionalTest extends Specifica
     @TempDir
     Path testFolder
     File buildFile
+    File settingsFile
 
     def setup() {
         buildFile = testFolder.resolve('build.gradle.kts').toFile()
-        testFolder.resolve('settings.gradle.kts').toFile() << 'rootProject.name = "test-project"'
+        settingsFile = testFolder.resolve('settings.gradle.kts').toFile() << 'rootProject.name = "test-project"'
     }
 
     TaskOutcome outcomeOf(BuildResult result, String path) {
@@ -41,6 +42,10 @@ abstract class AbstractLoggingCapabilitiesPluginFunctionalTest extends Specifica
                 .withPluginClasspath()
                 .withProjectDir(testFolder.toFile())
                 .withArguments(args + ["-s"])
+    }
+
+    void withSettingsScript(String content) {
+        settingsFile << content
     }
 
     void withBuildScript(String content) {

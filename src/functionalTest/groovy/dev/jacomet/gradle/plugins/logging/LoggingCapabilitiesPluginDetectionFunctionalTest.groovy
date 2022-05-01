@@ -167,4 +167,42 @@ loggingCapabilities {
         then:
         result.output.contains("log4j-to-slf4j-2.17.0.jar")
     }
+
+    @Requires({ instance.testGradleVersion >= GradleVersion.version("6.8") })
+    def "can be applied in settings script"() {
+        given:
+        withSettingsScript("""
+plugins {
+    id("dev.jacomet.logging-capabilities")
+}
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+    }
+    rulesMode.set(RulesMode.FAIL_ON_PROJECT_RULES)
+}
+""")
+        withBuildScript("""
+plugins {
+    `java-library`
+}
+dependencies {
+    implementation("org.apache.logging.log4j:log4j-core:2.17.0")
+    implementation("org.apache.logging.log4j:log4j-to-slf4j:2.17.0")
+}
+
+tasks.register("doIt") {
+    doLast {
+        println(configurations.compileClasspath.files)
+    }
+}
+""")
+
+        when:
+        def result = buildAndFail(['doIt'])
+
+        then:
+        outcomeOf(result, ':doIt') == FAILED
+        conflictOnCapability(result.output, "dev.jacomet.logging:log4j2-impl:2.17.0")
+    }
 }
